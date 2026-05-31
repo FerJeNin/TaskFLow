@@ -362,7 +362,7 @@ body {
 
 /* NUEVO: Contenedor y textos de la tarea vinculada */
 #linked-task-area {
-  display: flex !important; /* Fuerza a que respete flexbox cuando JS le da 'display: flex' */
+  display: flex 
   align-items: center; 
   justify-content: space-between;
   background: rgba(191,215,234,0.12);
