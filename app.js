@@ -148,7 +148,6 @@ function delProj(id, e) {
   e.stopPropagation();
   const p = S.projects.find(x => x.id === id);
   if (!p) return;
-  // NUEVO: confirmación custom en vez de confirm()
   openConfirm('🗂️',
     `¿Eliminar el proyecto <span class="modal-name">"${esc(p.name)}"</span>?<br>Se perderán todas sus tareas.`,
     'Eliminar',
@@ -178,10 +177,10 @@ function renderView() {
   document.getElementById('prog-fill').style.width = (tot > 0 ? Math.round(done / tot * 100) : 0) + '%';
   renderTasks(p);
   updateStats();
-  renderLinkedBanner(); // NUEVO
+  renderLinkedBanner();
 }
 
-// NUEVO: banner de tarea vinculada en el panel pomodoro
+// BANNER DE TAREA VINCULADA (ACTUALIZADO CON EL NUEVO HTML)
 function renderLinkedBanner() {
   const area = document.getElementById('linked-task-area');
   if (!linkedTaskId) { area.style.display = 'none'; return; }
@@ -191,11 +190,12 @@ function renderLinkedBanner() {
     if (t) task = t;
   });
   if (!task) { linkedTaskId = null; area.style.display = 'none'; return; }
-  area.style.display = 'block';
-  area.innerHTML = `<div class="linked-task-banner">
-    <span>🎯 ${esc(task.title)}</span>
-    <button onclick="unlinkTask()" title="Desvincular">✕</button>
-  </div>`;
+  
+  area.style.display = 'flex'; // Cambiado a flex para la alineación
+  area.innerHTML = `
+    <div class="linked-task-name">🎯 ${esc(task.title)}</div>
+    <button class="btn-unlink" onclick="unlinkTask()" title="Desvincular">×</button>
+  `;
 }
 
 function unlinkTask() {
@@ -205,6 +205,7 @@ function unlinkTask() {
   toast('Tarea desvinculada');
 }
 
+// RENDER DE TAREAS (ACTUALIZADO CON EL BOTÓN PLAY)
 function renderTasks(p) {
   const el = document.getElementById('tasks-list');
   if (!p.tasks.length) {
@@ -216,10 +217,10 @@ function renderTasks(p) {
     const sb = sub.length ? `<span class="badge b-sub">${sd}/${sub.length} sub</span>` : '';
     const pc = { high: 'b-high', mid: 'b-mid', low: 'b-low' }[t.prio] || 'b-mid';
     const pl = { high: 'Alta', mid: 'Media', low: 'Baja' }[t.prio] || 'Media';
-    // NUEVO: badge de sesiones pomodoro usadas
     const pb = (t.pomodoroSessions > 0) ? `<span class="badge b-pomo">🍅 ${t.pomodoroSessions}</span>` : '';
-    // NUEVO: botón de vincular y clase linked
+    
     const isLinked = linkedTaskId === t.id;
+    
     return `<div class="task-card${t.done ? ' done' : ''}${isLinked ? ' linked' : ''}">
       <div class="task-main">
         <div class="t-check${t.done ? ' checked' : ''}" onclick="toggleTask('${t.id}')"></div>
@@ -228,6 +229,7 @@ function renderTasks(p) {
           <div class="task-badges"><span class="badge ${pc}">${pl}</span>${sb}${pb}</div>
         </div>
         <div class="task-actions">
+          <button class="btn-play-task" onclick="iniciarPomodoroDesdeTarea('${t.id}')" title="Iniciar Pomodoro">▶</button>
           <button class="btn-icon link-btn${isLinked ? ' active' : ''}" onclick="linkTask('${t.id}')" title="${isLinked ? 'Desvincular' : 'Vincular al Pomodoro'}">🎯</button>
           <button class="btn-icon" onclick="toggleSub('${t.id}')">≡</button>
           <button class="btn-icon del" onclick="askDelTask('${t.id}')">✕</button>
@@ -247,7 +249,6 @@ function renderTasks(p) {
 }
 
 function renderSubs(t) {
-  // NUEVO: botón eliminar siempre visible en subtareas (con confirmación)
   return (t.subs || []).map(s => `
     <div class="subitem${s.done ? ' done' : ''}">
       <div class="s-check${s.done ? ' checked' : ''}" onclick="toggleSub2('${t.id}','${s.id}')"></div>
@@ -256,7 +257,6 @@ function renderSubs(t) {
     </div>`).join('');
 }
 
-// NUEVO: vincular tarea al pomodoro
 function linkTask(tid) {
   if (linkedTaskId === tid) { unlinkTask(); return; }
   linkedTaskId = tid;
@@ -276,7 +276,7 @@ function addTask() {
     id: uid(), title: v,
     prio: document.getElementById('new-task-prio').value,
     done: false, subOpen: false, subs: [],
-    pomodoroSessions: 0  // NUEVO
+    pomodoroSessions: 0 
   });
   inp.value = '';
   save(); renderView(); renderSidebar();
@@ -289,7 +289,6 @@ function toggleTask(id) {
   save(); renderView(); renderSidebar();
 }
 
-// NUEVO: eliminar tarea con confirmación
 function askDelTask(id) {
   const p = getProj(); if (!p) return;
   const t = p.tasks.find(t => t.id === id); if (!t) return;
@@ -331,7 +330,6 @@ function toggleSub2(tid, sid) {
   save(); renderView();
 }
 
-// NUEVO: eliminar subtarea con confirmación
 function askDelSub(tid, sid) {
   const p = getProj(), t = p && p.tasks.find(t => t.id === tid);
   if (!t) return;
@@ -362,7 +360,23 @@ function initTimer() {
 
 function toggleTimer() { running ? pauseTimer() : startTimer(); }
 
-// NUEVO: timer preciso con performance.now() + requestAnimationFrame
+// NUEVO: Función para el botón Play dentro de la tarjeta de tarea
+function iniciarPomodoroDesdeTarea(tid) {
+  // Aseguramos que la tarea esté vinculada
+  if (linkedTaskId !== tid) {
+    linkTask(tid);
+  }
+  
+  // Si no está corriendo el timer, lo iniciamos
+  if (!running) {
+    // Si estaba en descanso, forzamos a que vuelva a sesión de trabajo
+    if (phase !== 'work') {
+      initTimer();
+    }
+    startTimer();
+  }
+}
+
 function startTimer() {
   running = true;
   startTime = performance.now();
@@ -399,13 +413,12 @@ function resetTimer() {
 function timerDone() {
   cancelAnimationFrame(timerRAF);
   running = false;
-  playDone(); // NUEVO: sonido
+  playDone();
 
   if (phase === 'work') {
     S.stats.sessions++;
     S.stats.minutes += S.cfg.work;
 
-    // NUEVO: sumar sesión a la tarea vinculada
     if (linkedTaskId) {
       S.projects.forEach(proj => {
         const t = proj.tasks.find(t => t.id === linkedTaskId);
@@ -428,7 +441,7 @@ function timerDone() {
       toast('✅ Sesión lista. ¡Breve descanso!');
     }
   } else {
-    playBreakEnd(); // NUEVO: sonido de fin de descanso
+    playBreakEnd();
     phase = 'work'; secsLeft = S.cfg.work * 60;
     document.getElementById('phase-label').textContent = 'SESIÓN DE TRABAJO';
     document.getElementById('phase-pill').textContent = 'Trabajo';
