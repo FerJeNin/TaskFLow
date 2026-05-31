@@ -183,21 +183,32 @@ function renderView() {
 // BANNER DE TAREA VINCULADA (ACTUALIZADO CON EL NUEVO HTML)
 function renderLinkedBanner() {
   const area = document.getElementById('linked-task-area');
-  if (!linkedTaskId) { area.style.display = 'none'; return; }
+  
+  if (!linkedTaskId) { 
+    area.style.display = 'none'; 
+    area.innerHTML = ''; // Limpiamos el contenido por si acaso
+    return; 
+  }
+  
   let task = null;
   S.projects.forEach(proj => {
     const t = proj.tasks.find(t => t.id === linkedTaskId);
     if (t) task = t;
   });
-  if (!task) { linkedTaskId = null; area.style.display = 'none'; return; }
   
-  area.style.display = 'flex'; // Cambiado a flex para la alineación
+  if (!task) { 
+    linkedTaskId = null; 
+    area.style.display = 'none'; 
+    area.innerHTML = ''; 
+    return; 
+  }
+  
+  area.style.display = 'flex'; 
   area.innerHTML = `
     <div class="linked-task-name">🎯 ${esc(task.title)}</div>
     <button class="btn-unlink" onclick="unlinkTask()" title="Desvincular">×</button>
   `;
 }
-
 function unlinkTask() {
   linkedTaskId = null;
   renderLinkedBanner();
