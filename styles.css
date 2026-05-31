@@ -516,3 +516,30 @@ body {
   white-space: nowrap;
 }
 .notif.show { transform: translateX(-50%) translateY(0); }
+/* --- DRAG & DROP (ARRASTRAR Y SOLTAR) --- */
+.drag-handle {
+  cursor: grab;
+  color: rgba(191,215,234,0.3);
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+  user-select: none;
+}
+.drag-handle:hover { color: var(--text-sec); }
+.drag-handle:active { cursor: grabbing; }
+
+.sub-drag { font-size: 12px; margin-right: 4px; padding: 2px; }
+
+/* Efecto visual al arrastrar */
+.task-card.dragging { 
+  opacity: 0.4; 
+  transform: scale(0.98); 
+  border: 1.5px dashed var(--seaweed); 
+  box-shadow: none;
+}
+.subitem.dragging { 
+  opacity: 0.4; 
+  background: var(--beau-light); 
+}
