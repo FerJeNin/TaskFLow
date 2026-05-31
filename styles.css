@@ -105,14 +105,16 @@ body {
 }
 .proj-item.active .proj-badge { background: rgba(8,126,139,0.30); color: #4dc8d2; }
 
+/* MEJORADO: Botón eliminar proyecto */
 .proj-del {
-  background: none; border: none; cursor: pointer;
-  color: rgba(191,215,234,0.22); font-size: 13px;
-  padding: 2px 4px; display: none; border-radius: 4px;
-  transition: all 0.15s; line-height: 1;
+  background: rgba(255, 90, 95, 0.05); border: none; cursor: pointer;
+  color: rgba(191,215,234,0.4); font-size: 14px;
+  width: 22px; height: 22px; display: none; border-radius: 6px;
+  align-items: center; justify-content: center;
+  transition: all 0.15s; line-height: 1; padding-bottom: 1px;
 }
-.proj-item:hover .proj-del { display: block; }
-.proj-del:hover { color: var(--red); background: var(--lava-light); }
+.proj-item:hover .proj-del { display: flex; }
+.proj-del:hover { color: white; background: var(--red); transform: scale(1.1); }
 
 .sidebar-spacer { flex: 1; }
 
@@ -205,6 +207,7 @@ body {
 
 .tasks-list { display: flex; flex-direction: column; gap: 8px; }
 
+/* NUEVO: Tarjeta vinculada resaltada */
 .task-card {
   background: var(--card); border: 1px solid var(--border);
   border-radius: var(--r); overflow: hidden;
@@ -213,6 +216,7 @@ body {
 .task-card:hover { box-shadow: var(--shadow-md); border-color: var(--beau-dark); }
 .task-card.done { opacity: 0.55; }
 .task-card.done .task-title { text-decoration: line-through; color: var(--text-muted); }
+.task-card.linked { border-color: var(--seaweed-glow); box-shadow: 0 0 0 1px rgba(10,163,178,0.2); }
 
 .task-main {
   display: flex; align-items: center;
@@ -238,8 +242,20 @@ body {
 .b-mid  { background: #fff3cd; color: #9a6700; }
 .b-low  { background: rgba(8,126,139,0.10); color: var(--seaweed-dark); }
 .b-sub  { background: rgba(11,57,84,0.08); color: var(--prussian-soft); }
+.b-pomo { background: #ffe4e6; color: #e11d48; }
 
 .task-actions { display: flex; gap: 5px; align-items: center; }
+
+/* NUEVO: Botón de Play en la tarea (se muestra solo si está vinculada) */
+.btn-play-task {
+  background: rgba(8,126,139,0.15); border: 1px solid var(--seaweed);
+  border-radius: 6px; padding: 5px 10px; cursor: pointer;
+  font-size: 11px; color: var(--seaweed-dark);
+  transition: all 0.15s; display: none; align-items: center; gap: 4px;
+}
+.btn-play-task:hover { background: var(--seaweed); color: white; }
+.task-card.linked .btn-play-task { display: flex; }
+
 .btn-icon {
   background: none; border: 1px solid var(--border);
   border-radius: 6px; padding: 5px 8px; cursor: pointer;
@@ -247,7 +263,11 @@ body {
   transition: all 0.15s; line-height: 1;
 }
 .btn-icon:hover { background: var(--beau-light); color: var(--prussian); border-color: var(--beau-dark); }
-.btn-icon.del:hover { background: var(--lava-light); color: var(--lava); border-color: rgba(200,29,37,0.22); }
+.btn-icon.active { background: var(--seaweed-light); border-color: var(--seaweed); }
+
+/* MEJORADO: Botón eliminar tarea */
+.btn-icon.del { color: #d15b60; }
+.btn-icon.del:hover { background: var(--lava); color: white; border-color: var(--lava); }
 
 .btn-expand {
   background: none; border: none; cursor: pointer;
@@ -294,13 +314,16 @@ body {
 
 .s-text { font-size: 13px; color: var(--text-sec); flex: 1; }
 .subitem.done .s-text { text-decoration: line-through; color: var(--text-muted); }
+
+/* MEJORADO: Botón eliminar subtarea */
 .s-del {
-  background: none; border: none; cursor: pointer;
-  color: var(--text-muted); font-size: 13px; padding: 0 2px;
-  opacity: 0; transition: opacity 0.15s, color 0.15s; border-radius: 3px;
+  background: rgba(200, 29, 37, 0.05); border: 1px solid transparent; cursor: pointer;
+  color: #d15b60; font-size: 12px; width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: all 0.15s; border-radius: 4px;
 }
 .subitem:hover .s-del { opacity: 1; }
-.s-del:hover { color: var(--lava); }
+.s-del:hover { color: white; background: var(--lava); border-color: var(--lava); }
 
 .empty {
   display: flex; flex-direction: column; align-items: center;
@@ -336,6 +359,35 @@ body {
   letter-spacing: 0; text-transform: none;
 }
 .phase-pill.brk { background: rgba(255,90,95,0.18); color: #ff8a8e; }
+
+/* NUEVO: Contenedor y textos de la tarea vinculada */
+#linked-task-area {
+  display: flex !important; /* Fuerza a que respete flexbox cuando JS le da 'display: flex' */
+  align-items: center; 
+  justify-content: space-between;
+  background: rgba(191,215,234,0.12);
+  border: 1px solid rgba(191,215,234,0.2);
+  padding: 8px 14px; 
+  border-radius: 8px; 
+  margin-bottom: 16px;
+}
+.linked-task-name {
+  color: var(--beau); 
+  font-size: 13px; 
+  font-weight: 600;
+  display: flex; 
+  align-items: center; 
+  gap: 8px;
+}
+
+/* MEJORADO: La 'X' del pomodoro */
+.btn-unlink {
+  background: rgba(255, 90, 95, 0.1); border: none; border-radius: 6px;
+  color: #ff767a; cursor: pointer; font-size: 16px;
+  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s; line-height: 1; padding-bottom: 2px;
+}
+.btn-unlink:hover { background: var(--red); color: white; transform: scale(1.05); }
 
 .timer-wrap { display: flex; flex-direction: column; align-items: center; gap: 16px; }
 .svg-wrap { position: relative; width: 156px; height: 156px; }
@@ -440,6 +492,16 @@ body {
   font-family: 'DM Sans', sans-serif; cursor: pointer; transition: background 0.15s;
 }
 .btn-cancel:hover { background: var(--beau-light); }
+
+/* NUEVO: Botón rojo del modal de confirmación */
+.btn-danger {
+  flex: 1; background: var(--lava); color: white;
+  border: none; border-radius: var(--rs); padding: 10px;
+  font-size: 14px; font-weight: 500; font-family: 'DM Sans', sans-serif;
+  cursor: pointer; transition: background 0.15s, transform 0.1s;
+}
+.btn-danger:hover { background: #a7161f; }
+.btn-danger:active { transform: scale(0.97); }
 
 /* ─── TOAST ─── */
 .notif {
