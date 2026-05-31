@@ -7,23 +7,27 @@ let S = {
   stats: { sessions: 0, minutes: 0 }
 };
 
+// NUEVO: timer preciso con performance.now()
 let timerRAF = null, running = false;
 let phase = 'work', secsLeft = 0, totalSecs = 0;
 let startTime = null, pausedSecsLeft = 0;
-let linkedTaskId = null;
-let pendingConfirm = null;
-let notifT;
 
-const CIRC = 2 * Math.PI * 62;
+// NUEVO: tarea vinculada al pomodoro
+let linkedTaskId = null;
+
+// NUEVO: confirmación pendiente
+let pendingConfirm = null;
+
+const CIRC = 2 * Math.PI * 66; // radio 66 igual que el original
 
 // ─── PERSISTENCE ─────────────────────────────────────────────────────────────
 
-const save = () => localStorage.setItem('tf4', JSON.stringify(S));
+const save = () => localStorage.setItem('tf3', JSON.stringify(S));
 
 function load() {
   try {
-    const d = localStorage.getItem('tf4');
-    if (d) { const p = JSON.parse(d); S = { ...S, ...p }; }
+    const d = localStorage.getItem('tf3');
+    if (d) S = { ...S, ...JSON.parse(d) };
   } catch (e) {}
 }
 
@@ -35,21 +39,21 @@ const getProj = () => S.projects.find(p => p.id === S.active) || null;
 
 // ─── TOAST ───────────────────────────────────────────────────────────────────
 
+let nT;
 function toast(msg) {
   const el = document.getElementById('notif');
   el.textContent = msg;
   el.classList.add('show');
-  clearTimeout(notifT);
-  notifT = setTimeout(() => el.classList.remove('show'), 3000);
+  clearTimeout(nT);
+  nT = setTimeout(() => el.classList.remove('show'), 3000);
 }
 
-// ─── SOUND ───────────────────────────────────────────────────────────────────
+// ─── NUEVO: SONIDO ───────────────────────────────────────────────────────────
 
 function playDone() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const notes = [523, 659, 784, 1047];
-    notes.forEach((freq, i) => {
+    [523, 659, 784, 1047].forEach((freq, i) => {
       const o = ctx.createOscillator(), g = ctx.createGain();
       o.connect(g); g.connect(ctx.destination);
       o.type = 'sine'; o.frequency.value = freq;
@@ -74,7 +78,7 @@ function playBreakEnd() {
   } catch (e) {}
 }
 
-// ─── CONFIRM MODAL ───────────────────────────────────────────────────────────
+// ─── NUEVO: MODAL DE CONFIRMACIÓN ────────────────────────────────────────────
 
 function openConfirm(icon, body, okLabel, fn) {
   document.getElementById('confirm-icon').textContent = icon;
@@ -144,14 +148,12 @@ function delProj(id, e) {
   e.stopPropagation();
   const p = S.projects.find(x => x.id === id);
   if (!p) return;
+  // NUEVO: confirmación custom en vez de confirm()
   openConfirm('🗂️',
-    `¿Eliminar el proyecto <span class="modal-name">"${esc(p.name)}"</span>? Se perderán todas sus tareas.`,
+    `¿Eliminar el proyecto <span class="modal-name">"${esc(p.name)}"</span>?<br>Se perderán todas sus tareas.`,
     'Eliminar',
     () => {
-      if (linkedTaskId) {
-        const t = p.tasks.find(t => t.id === linkedTaskId);
-        if (t) unlinkTask();
-      }
+      if (linkedTaskId && p.tasks.find(t => t.id === linkedTaskId)) linkedTaskId = null;
       S.projects = S.projects.filter(x => x.id !== id);
       if (S.active === id) S.active = null;
       save();
@@ -170,17 +172,16 @@ function renderView() {
   document.getElementById('proj-view').style.display = p ? 'flex' : 'none';
   if (!p) { updateStats(); return; }
 
-  document.getElementById('proj-view').style.flexDirection = 'column';
-  document.getElementById('proj-view').style.gap = '18px';
   document.getElementById('proj-title').textContent = p.name;
   const tot = p.tasks.length, done = p.tasks.filter(t => t.done).length;
   document.getElementById('cl-sub').textContent = `${done} de ${tot} tareas completadas`;
   document.getElementById('prog-fill').style.width = (tot > 0 ? Math.round(done / tot * 100) : 0) + '%';
   renderTasks(p);
   updateStats();
-  renderLinkedBanner();
+  renderLinkedBanner(); // NUEVO
 }
 
+// NUEVO: banner de tarea vinculada en el panel pomodoro
 function renderLinkedBanner() {
   const area = document.getElementById('linked-task-area');
   if (!linkedTaskId) { area.style.display = 'none'; return; }
@@ -204,8 +205,6 @@ function unlinkTask() {
   toast('Tarea desvinculada');
 }
 
-// ─── TASKS ───────────────────────────────────────────────────────────────────
-
 function renderTasks(p) {
   const el = document.getElementById('tasks-list');
   if (!p.tasks.length) {
@@ -217,14 +216,16 @@ function renderTasks(p) {
     const sb = sub.length ? `<span class="badge b-sub">${sd}/${sub.length} sub</span>` : '';
     const pc = { high: 'b-high', mid: 'b-mid', low: 'b-low' }[t.prio] || 'b-mid';
     const pl = { high: 'Alta', mid: 'Media', low: 'Baja' }[t.prio] || 'Media';
-    const pc2 = t.pomodoroSessions > 0 ? `<span class="badge b-pomo">🍅 ${t.pomodoroSessions}</span>` : '';
+    // NUEVO: badge de sesiones pomodoro usadas
+    const pb = (t.pomodoroSessions > 0) ? `<span class="badge b-pomo">🍅 ${t.pomodoroSessions}</span>` : '';
+    // NUEVO: botón de vincular y clase linked
     const isLinked = linkedTaskId === t.id;
     return `<div class="task-card${t.done ? ' done' : ''}${isLinked ? ' linked' : ''}">
       <div class="task-main">
         <div class="t-check${t.done ? ' checked' : ''}" onclick="toggleTask('${t.id}')"></div>
         <div class="task-info">
           <div class="task-title">${esc(t.title)}</div>
-          <div class="task-badges"><span class="badge ${pc}">${pl}</span>${sb}${pc2}</div>
+          <div class="task-badges"><span class="badge ${pc}">${pl}</span>${sb}${pb}</div>
         </div>
         <div class="task-actions">
           <button class="btn-icon link-btn${isLinked ? ' active' : ''}" onclick="linkTask('${t.id}')" title="${isLinked ? 'Desvincular' : 'Vincular al Pomodoro'}">🎯</button>
@@ -246,14 +247,16 @@ function renderTasks(p) {
 }
 
 function renderSubs(t) {
+  // NUEVO: botón eliminar siempre visible en subtareas (con confirmación)
   return (t.subs || []).map(s => `
     <div class="subitem${s.done ? ' done' : ''}">
       <div class="s-check${s.done ? ' checked' : ''}" onclick="toggleSub2('${t.id}','${s.id}')"></div>
       <span class="s-text">${esc(s.text)}</span>
-      <button class="s-del" onclick="askDelSub('${t.id}','${s.id}')">✕</button>
+      <button class="s-del always-visible" onclick="askDelSub('${t.id}','${s.id}')">✕</button>
     </div>`).join('');
 }
 
+// NUEVO: vincular tarea al pomodoro
 function linkTask(tid) {
   if (linkedTaskId === tid) { unlinkTask(); return; }
   linkedTaskId = tid;
@@ -263,6 +266,8 @@ function linkTask(tid) {
   if (task) toast(`Tarea vinculada: "${task.title}"`);
 }
 
+// ─── TASKS ───────────────────────────────────────────────────────────────────
+
 function addTask() {
   const inp = document.getElementById('new-task-inp'), v = inp.value.trim();
   if (!v) return;
@@ -270,7 +275,8 @@ function addTask() {
   p.tasks.push({
     id: uid(), title: v,
     prio: document.getElementById('new-task-prio').value,
-    done: false, subOpen: false, subs: [], pomodoroSessions: 0
+    done: false, subOpen: false, subs: [],
+    pomodoroSessions: 0  // NUEVO
   });
   inp.value = '';
   save(); renderView(); renderSidebar();
@@ -283,6 +289,7 @@ function toggleTask(id) {
   save(); renderView(); renderSidebar();
 }
 
+// NUEVO: eliminar tarea con confirmación
 function askDelTask(id) {
   const p = getProj(); if (!p) return;
   const t = p.tasks.find(t => t.id === id); if (!t) return;
@@ -324,6 +331,7 @@ function toggleSub2(tid, sid) {
   save(); renderView();
 }
 
+// NUEVO: eliminar subtarea con confirmación
 function askDelSub(tid, sid) {
   const p = getProj(), t = p && p.tasks.find(t => t.id === tid);
   if (!t) return;
@@ -346,30 +354,15 @@ function initTimer() {
   totalSecs = secsLeft;
   pausedSecsLeft = secsLeft;
   renderClock();
-  setPhaseUI('work');
+  document.getElementById('phase-label').textContent = 'SESIÓN DE TRABAJO';
+  document.getElementById('phase-pill').textContent = 'Trabajo';
+  document.getElementById('phase-pill').className = 'phase-pill';
   renderDots();
-}
-
-function setPhaseUI(p) {
-  const lbl = document.getElementById('phase-label');
-  const pill = document.getElementById('phase-pill');
-  if (p === 'work') {
-    lbl.textContent = 'SESIÓN DE TRABAJO';
-    pill.textContent = 'Trabajo';
-    pill.className = 'phase-pill';
-  } else if (p === 'short') {
-    lbl.textContent = 'DESCANSO CORTO';
-    pill.textContent = 'Descanso';
-    pill.className = 'phase-pill brk';
-  } else {
-    lbl.textContent = 'DESCANSO LARGO';
-    pill.textContent = 'Descanso largo';
-    pill.className = 'phase-pill brk';
-  }
 }
 
 function toggleTimer() { running ? pauseTimer() : startTimer(); }
 
+// NUEVO: timer preciso con performance.now() + requestAnimationFrame
 function startTimer() {
   running = true;
   startTime = performance.now();
@@ -406,36 +399,41 @@ function resetTimer() {
 function timerDone() {
   cancelAnimationFrame(timerRAF);
   running = false;
-  playDone();
+  playDone(); // NUEVO: sonido
 
   if (phase === 'work') {
     S.stats.sessions++;
     S.stats.minutes += S.cfg.work;
 
-    // Sumar sesión a la tarea vinculada
+    // NUEVO: sumar sesión a la tarea vinculada
     if (linkedTaskId) {
-      S.projects.forEach(p => {
-        const t = p.tasks.find(t => t.id === linkedTaskId);
+      S.projects.forEach(proj => {
+        const t = proj.tasks.find(t => t.id === linkedTaskId);
         if (t) t.pomodoroSessions = (t.pomodoroSessions || 0) + 1;
       });
     }
     save();
 
-    const isLong = S.stats.sessions % S.cfg.sessBeforeLong === 0;
-    if (isLong) {
+    if (S.stats.sessions % S.cfg.sessBeforeLong === 0) {
       phase = 'long'; secsLeft = S.cfg.long * 60;
-      setPhaseUI('long');
+      document.getElementById('phase-label').textContent = 'DESCANSO LARGO';
+      document.getElementById('phase-pill').textContent = 'Descanso largo';
+      document.getElementById('phase-pill').className = 'phase-pill brk';
       toast('🎉 ¡Descanso largo! Te lo ganaste.');
     } else {
       phase = 'short'; secsLeft = S.cfg.short * 60;
-      setPhaseUI('short');
-      toast('✅ ¡Sesión completada! Tómate un descanso.');
+      document.getElementById('phase-label').textContent = 'DESCANSO CORTO';
+      document.getElementById('phase-pill').textContent = 'Descanso';
+      document.getElementById('phase-pill').className = 'phase-pill brk';
+      toast('✅ Sesión lista. ¡Breve descanso!');
     }
   } else {
-    playBreakEnd();
+    playBreakEnd(); // NUEVO: sonido de fin de descanso
     phase = 'work'; secsLeft = S.cfg.work * 60;
-    setPhaseUI('work');
-    toast('⏱ ¡Descanso terminado! A trabajar.');
+    document.getElementById('phase-label').textContent = 'SESIÓN DE TRABAJO';
+    document.getElementById('phase-pill').textContent = 'Trabajo';
+    document.getElementById('phase-pill').className = 'phase-pill';
+    toast('⏱ ¡A trabajar!');
   }
 
   totalSecs = secsLeft;
