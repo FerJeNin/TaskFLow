@@ -232,8 +232,15 @@ function renderTasks(p) {
     
     const isLinked = linkedTaskId === t.id;
     
-    return `<div class="task-card${t.done ? ' done' : ''}${isLinked ? ' linked' : ''}">
+    // SE AGREGÓ: draggable y eventos ondrag...
+    return `<div class="task-card${t.done ? ' done' : ''}${isLinked ? ' linked' : ''}"
+      draggable="true"
+      ondragstart="tDragStart(event, '${t.id}')"
+      ondragover="event.preventDefault()"
+      ondrop="tDrop(event, '${t.id}')"
+      ondragend="tDragEnd(event)">
       <div class="task-main">
+        <div class="drag-handle" title="Arrastrar para ordenar">⋮⋮</div>
         <div class="t-check${t.done ? ' checked' : ''}" onclick="toggleTask('${t.id}')"></div>
         <div class="task-info">
           <div class="task-title">${esc(t.title)}</div>
@@ -260,8 +267,15 @@ function renderTasks(p) {
 }
 
 function renderSubs(t) {
+  // SE AGREGÓ: draggable y eventos ondrag... a las subtareas
   return (t.subs || []).map(s => `
-    <div class="subitem${s.done ? ' done' : ''}">
+    <div class="subitem${s.done ? ' done' : ''}"
+      draggable="true"
+      ondragstart="sDragStart(event, '${t.id}', '${s.id}')"
+      ondragover="event.preventDefault()"
+      ondrop="sDrop(event, '${t.id}', '${s.id}')"
+      ondragend="sDragEnd(event)">
+      <div class="drag-handle sub-drag" title="Arrastrar">⋮⋮</div>
       <div class="s-check${s.done ? ' checked' : ''}" onclick="toggleSub2('${t.id}','${s.id}')"></div>
       <span class="s-text">${esc(s.text)}</span>
       <button class="s-del always-visible" onclick="askDelSub('${t.id}','${s.id}')">✕</button>
@@ -522,6 +536,78 @@ function saveCfg() {
   closeCfgModal();
   if (!running) initTimer();
   toast('Configuración guardada ✓');
+}
+
+let draggedTaskId = null;
+let draggedSubId = null;
+
+// Lógica para Tareas Principales
+function tDragStart(e, id) {
+  draggedTaskId = id;
+  e.dataTransfer.effectAllowed = 'move';
+  // setTimeout asegura que el navegador capture la imagen del elemento antes de ponerlo transparente
+  setTimeout(() => e.target.classList.add('dragging'), 0);
+}
+
+function tDrop(e, targetId) {
+  e.preventDefault();
+  e.stopPropagation();
+  if (!draggedTaskId || draggedTaskId === targetId) return;
+
+  const p = getProj();
+  if (!p) return;
+
+  const oldIdx = p.tasks.findIndex(t => t.id === draggedTaskId);
+  const newIdx = p.tasks.findIndex(t => t.id === targetId);
+
+  if (oldIdx === -1 || newIdx === -1) return;
+
+  // Extraemos la tarea y la insertamos en la nueva posición
+  const [movedTask] = p.tasks.splice(oldIdx, 1);
+  p.tasks.splice(newIdx, 0, movedTask);
+
+  save();
+  renderView();
+}
+
+function tDragEnd(e) {
+  e.target.classList.remove('dragging');
+  draggedTaskId = null;
+}
+
+// Lógica para Subtareas
+function sDragStart(e, tid, sid) {
+  draggedSubId = sid;
+  e.dataTransfer.effectAllowed = 'move';
+  e.stopPropagation(); // Evita que se arrastre la tarea padre
+  setTimeout(() => e.target.classList.add('dragging'), 0);
+}
+
+function sDrop(e, tid, targetSid) {
+  e.preventDefault();
+  e.stopPropagation(); // Evita que se dispare el drop de la tarea padre
+  if (!draggedSubId || draggedSubId === targetSid) return;
+
+  const p = getProj();
+  const task = p.tasks.find(x => x.id === tid);
+  if (!task) return;
+
+  const oldIdx = task.subs.findIndex(s => s.id === draggedSubId);
+  const newIdx = task.subs.findIndex(s => s.id === targetSid);
+
+  if (oldIdx === -1 || newIdx === -1) return;
+
+  const [movedSub] = task.subs.splice(oldIdx, 1);
+  task.subs.splice(newIdx, 0, movedSub);
+
+  save();
+  renderView();
+}
+
+function sDragEnd(e) {
+  e.target.classList.remove('dragging');
+  draggedSubId = null;
+  e.stopPropagation();
 }
 
 // ─── MODAL CLOSE ON BACKDROP ─────────────────────────────────────────────────
