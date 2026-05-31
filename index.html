@@ -29,11 +29,20 @@
       <p>Tus tareas aparecerán aquí</p>
     </div>
     <div id="proj-view" style="display:none; flex-direction:column; gap:20px;">
+      
       <div class="cl-header">
-        <h2><span class="h2-dot"></span><span id="proj-title">Proyecto</span></h2>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h2><span class="h2-dot"></span><span id="proj-title">Proyecto</span></h2>
+          <label class="seq-toggle" title="Obliga a terminar la tarea anterior primero">
+            <input type="checkbox" id="seq-check" onchange="toggleSequential()">
+            <span class="seq-slider"></span>
+            Modo Estricto
+          </label>
+        </div>
         <p class="cl-sub" id="cl-sub">0 de 0 tareas completadas</p>
         <div class="prog-bar"><div class="prog-fill" id="prog-fill" style="width:0%"></div></div>
       </div>
+
       <div class="add-card">
         <input type="text" id="new-task-inp" placeholder="¿Qué necesitas hacer?"
           onkeydown="if(event.key==='Enter') addTask()">
