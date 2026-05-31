@@ -473,12 +473,16 @@ function resetTimer() {
 function timerDone() {
   cancelAnimationFrame(timerRAF);
   running = false;
-  playDone();
+  
+  let shouldAutoStart = false;
 
+  // Lógica principal dependiendo de qué fase acaba de terminar
   if (phase === 'work') {
+    playDone(); // Sonido especial para cuando terminas de trabajar
     S.stats.sessions++;
     S.stats.minutes += S.cfg.work;
 
+    // Vincular la sesión a la tarea activa
     if (linkedTaskId) {
       S.projects.forEach(proj => {
         const t = proj.tasks.find(t => t.id === linkedTaskId);
@@ -487,37 +491,58 @@ function timerDone() {
     }
     save();
 
+    // ¿Toca descanso largo o corto?
     if (S.stats.sessions % S.cfg.sessBeforeLong === 0) {
       phase = 'long'; secsLeft = S.cfg.long * 60;
       document.getElementById('phase-label').textContent = 'DESCANSO LARGO';
       document.getElementById('phase-pill').textContent = 'Descanso largo';
       document.getElementById('phase-pill').className = 'phase-pill brk';
-      toast('🎉 ¡Descanso largo! Te lo ganaste.');
+      toast('🎉 ¡Descanso largo! Inícialo cuando estés listo.');
+      shouldAutoStart = false; // El descanso largo se inicia manual
     } else {
       phase = 'short'; secsLeft = S.cfg.short * 60;
       document.getElementById('phase-label').textContent = 'DESCANSO CORTO';
       document.getElementById('phase-pill').textContent = 'Descanso';
       document.getElementById('phase-pill').className = 'phase-pill brk';
       toast('✅ Sesión lista. ¡Breve descanso!');
+      shouldAutoStart = true; // Auto-iniciar descanso corto
     }
-  } else {
-    playBreakEnd();
+
+  } else if (phase === 'short') {
+    playBreakEnd(); // Sonido para volver al trabajo
     phase = 'work'; secsLeft = S.cfg.work * 60;
     document.getElementById('phase-label').textContent = 'SESIÓN DE TRABAJO';
     document.getElementById('phase-pill').textContent = 'Trabajo';
     document.getElementById('phase-pill').className = 'phase-pill';
     toast('⏱ ¡A trabajar!');
+    shouldAutoStart = true; // Auto-iniciar la sesión de trabajo
+
+  } else if (phase === 'long') {
+    playBreakEnd(); 
+    phase = 'work'; secsLeft = S.cfg.work * 60;
+    document.getElementById('phase-label').textContent = 'SESIÓN DE TRABAJO';
+    document.getElementById('phase-pill').textContent = 'Trabajo';
+    document.getElementById('phase-pill').className = 'phase-pill';
+    toast('⏱ Ciclo completado. Inicia el nuevo ciclo.');
+    shouldAutoStart = false; // El nuevo ciclo se inicia manual
   }
 
+  // Actualizar UI
   totalSecs = secsLeft;
   pausedSecsLeft = secsLeft;
   renderClock();
   renderDots();
-  document.getElementById('btn-play').innerHTML = '▶ Iniciar';
-  document.getElementById('t-sub').textContent = 'Listo';
   document.getElementById('ses-num').textContent = S.stats.sessions;
   updateStats();
   renderView();
+
+  // Control de Flujo Continuo
+  if (shouldAutoStart) {
+    startTimer();
+  } else {
+    document.getElementById('btn-play').innerHTML = '▶ Iniciar';
+    document.getElementById('t-sub').textContent = 'Listo';
+  }
 }
 
 function renderClock() {
