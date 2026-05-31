@@ -7,17 +7,23 @@ let S = {
   stats: { sessions: 0, minutes: 0 }
 };
 
-let timerInt = null, running = false;
-let phase = 'work', secs = 0, total = 0;
+let timerRAF = null, running = false;
+let phase = 'work', secsLeft = 0, totalSecs = 0;
+let startTime = null, pausedSecsLeft = 0;
+let linkedTaskId = null;
+let pendingConfirm = null;
+let notifT;
+
+const CIRC = 2 * Math.PI * 62;
 
 // ─── PERSISTENCE ─────────────────────────────────────────────────────────────
 
-const save = () => localStorage.setItem('tf3', JSON.stringify(S));
+const save = () => localStorage.setItem('tf4', JSON.stringify(S));
 
 function load() {
   try {
-    const d = localStorage.getItem('tf3');
-    if (d) S = { ...S, ...JSON.parse(d) };
+    const d = localStorage.getItem('tf4');
+    if (d) { const p = JSON.parse(d); S = { ...S, ...p }; }
   } catch (e) {}
 }
 
@@ -29,14 +35,68 @@ const getProj = () => S.projects.find(p => p.id === S.active) || null;
 
 // ─── TOAST ───────────────────────────────────────────────────────────────────
 
-let nT;
 function toast(msg) {
   const el = document.getElementById('notif');
   el.textContent = msg;
   el.classList.add('show');
-  clearTimeout(nT);
-  nT = setTimeout(() => el.classList.remove('show'), 3000);
+  clearTimeout(notifT);
+  notifT = setTimeout(() => el.classList.remove('show'), 3000);
 }
+
+// ─── SOUND ───────────────────────────────────────────────────────────────────
+
+function playDone() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const notes = [523, 659, 784, 1047];
+    notes.forEach((freq, i) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'sine'; o.frequency.value = freq;
+      const t = ctx.currentTime + i * 0.18;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.25, t + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+      o.start(t); o.stop(t + 0.38);
+    });
+  } catch (e) {}
+}
+
+function playBreakEnd() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.type = 'sine'; o.frequency.value = 660;
+    g.gain.setValueAtTime(0.3, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
+    o.start(ctx.currentTime); o.stop(ctx.currentTime + 0.85);
+  } catch (e) {}
+}
+
+// ─── CONFIRM MODAL ───────────────────────────────────────────────────────────
+
+function openConfirm(icon, body, okLabel, fn) {
+  document.getElementById('confirm-icon').textContent = icon;
+  document.getElementById('confirm-body').innerHTML = body;
+  document.getElementById('confirm-ok').textContent = okLabel;
+  pendingConfirm = fn;
+  document.getElementById('confirm-modal').classList.add('open');
+}
+
+function closeConfirm() {
+  document.getElementById('confirm-modal').classList.remove('open');
+  pendingConfirm = null;
+}
+
+function confirmAction() {
+  if (pendingConfirm) pendingConfirm();
+  closeConfirm();
+}
+
+document.getElementById('confirm-modal').addEventListener('click', e => {
+  if (e.target.id === 'confirm-modal') closeConfirm();
+});
 
 // ─── SIDEBAR ─────────────────────────────────────────────────────────────────
 
@@ -83,12 +143,23 @@ function saveProjModal() {
 function delProj(id, e) {
   e.stopPropagation();
   const p = S.projects.find(x => x.id === id);
-  if (!p || !confirm(`¿Eliminar "${p.name}"?`)) return;
-  S.projects = S.projects.filter(x => x.id !== id);
-  if (S.active === id) S.active = null;
-  save();
-  renderSidebar();
-  renderView();
+  if (!p) return;
+  openConfirm('🗂️',
+    `¿Eliminar el proyecto <span class="modal-name">"${esc(p.name)}"</span>? Se perderán todas sus tareas.`,
+    'Eliminar',
+    () => {
+      if (linkedTaskId) {
+        const t = p.tasks.find(t => t.id === linkedTaskId);
+        if (t) unlinkTask();
+      }
+      S.projects = S.projects.filter(x => x.id !== id);
+      if (S.active === id) S.active = null;
+      save();
+      renderSidebar();
+      renderView();
+      toast('Proyecto eliminado');
+    }
+  );
 }
 
 // ─── MAIN VIEW ───────────────────────────────────────────────────────────────
@@ -99,13 +170,41 @@ function renderView() {
   document.getElementById('proj-view').style.display = p ? 'flex' : 'none';
   if (!p) { updateStats(); return; }
 
+  document.getElementById('proj-view').style.flexDirection = 'column';
+  document.getElementById('proj-view').style.gap = '18px';
   document.getElementById('proj-title').textContent = p.name;
   const tot = p.tasks.length, done = p.tasks.filter(t => t.done).length;
   document.getElementById('cl-sub').textContent = `${done} de ${tot} tareas completadas`;
   document.getElementById('prog-fill').style.width = (tot > 0 ? Math.round(done / tot * 100) : 0) + '%';
   renderTasks(p);
   updateStats();
+  renderLinkedBanner();
 }
+
+function renderLinkedBanner() {
+  const area = document.getElementById('linked-task-area');
+  if (!linkedTaskId) { area.style.display = 'none'; return; }
+  let task = null;
+  S.projects.forEach(proj => {
+    const t = proj.tasks.find(t => t.id === linkedTaskId);
+    if (t) task = t;
+  });
+  if (!task) { linkedTaskId = null; area.style.display = 'none'; return; }
+  area.style.display = 'block';
+  area.innerHTML = `<div class="linked-task-banner">
+    <span>🎯 ${esc(task.title)}</span>
+    <button onclick="unlinkTask()" title="Desvincular">✕</button>
+  </div>`;
+}
+
+function unlinkTask() {
+  linkedTaskId = null;
+  renderLinkedBanner();
+  renderView();
+  toast('Tarea desvinculada');
+}
+
+// ─── TASKS ───────────────────────────────────────────────────────────────────
 
 function renderTasks(p) {
   const el = document.getElementById('tasks-list');
@@ -118,16 +217,19 @@ function renderTasks(p) {
     const sb = sub.length ? `<span class="badge b-sub">${sd}/${sub.length} sub</span>` : '';
     const pc = { high: 'b-high', mid: 'b-mid', low: 'b-low' }[t.prio] || 'b-mid';
     const pl = { high: 'Alta', mid: 'Media', low: 'Baja' }[t.prio] || 'Media';
-    return `<div class="task-card${t.done ? ' done' : ''}">
+    const pc2 = t.pomodoroSessions > 0 ? `<span class="badge b-pomo">🍅 ${t.pomodoroSessions}</span>` : '';
+    const isLinked = linkedTaskId === t.id;
+    return `<div class="task-card${t.done ? ' done' : ''}${isLinked ? ' linked' : ''}">
       <div class="task-main">
         <div class="t-check${t.done ? ' checked' : ''}" onclick="toggleTask('${t.id}')"></div>
         <div class="task-info">
           <div class="task-title">${esc(t.title)}</div>
-          <div class="task-badges"><span class="badge ${pc}">${pl}</span>${sb}</div>
+          <div class="task-badges"><span class="badge ${pc}">${pl}</span>${sb}${pc2}</div>
         </div>
         <div class="task-actions">
+          <button class="btn-icon link-btn${isLinked ? ' active' : ''}" onclick="linkTask('${t.id}')" title="${isLinked ? 'Desvincular' : 'Vincular al Pomodoro'}">🎯</button>
           <button class="btn-icon" onclick="toggleSub('${t.id}')">≡</button>
-          <button class="btn-icon del" onclick="delTask('${t.id}')">✕</button>
+          <button class="btn-icon del" onclick="askDelTask('${t.id}')">✕</button>
         </div>
         <button class="btn-expand${t.subOpen ? ' open' : ''}" onclick="toggleSub('${t.id}')">▶</button>
       </div>
@@ -148,11 +250,18 @@ function renderSubs(t) {
     <div class="subitem${s.done ? ' done' : ''}">
       <div class="s-check${s.done ? ' checked' : ''}" onclick="toggleSub2('${t.id}','${s.id}')"></div>
       <span class="s-text">${esc(s.text)}</span>
-      <button class="s-del" onclick="delSub('${t.id}','${s.id}')">✕</button>
+      <button class="s-del" onclick="askDelSub('${t.id}','${s.id}')">✕</button>
     </div>`).join('');
 }
 
-// ─── TASKS ───────────────────────────────────────────────────────────────────
+function linkTask(tid) {
+  if (linkedTaskId === tid) { unlinkTask(); return; }
+  linkedTaskId = tid;
+  renderView();
+  let task = null;
+  S.projects.forEach(p => { const t = p.tasks.find(t => t.id === tid); if (t) task = t; });
+  if (task) toast(`Tarea vinculada: "${task.title}"`);
+}
 
 function addTask() {
   const inp = document.getElementById('new-task-inp'), v = inp.value.trim();
@@ -161,7 +270,7 @@ function addTask() {
   p.tasks.push({
     id: uid(), title: v,
     prio: document.getElementById('new-task-prio').value,
-    done: false, subOpen: false, subs: []
+    done: false, subOpen: false, subs: [], pomodoroSessions: 0
   });
   inp.value = '';
   save(); renderView(); renderSidebar();
@@ -174,10 +283,19 @@ function toggleTask(id) {
   save(); renderView(); renderSidebar();
 }
 
-function delTask(id) {
+function askDelTask(id) {
   const p = getProj(); if (!p) return;
-  p.tasks = p.tasks.filter(t => t.id !== id);
-  save(); renderView(); renderSidebar();
+  const t = p.tasks.find(t => t.id === id); if (!t) return;
+  openConfirm('🗑️',
+    `¿Eliminar la tarea <span class="modal-name">"${esc(t.title)}"</span>?`,
+    'Eliminar',
+    () => {
+      if (linkedTaskId === id) linkedTaskId = null;
+      p.tasks = p.tasks.filter(t => t.id !== id);
+      save(); renderView(); renderSidebar();
+      toast('Tarea eliminada');
+    }
+  );
 }
 
 function toggleSub(tid) {
@@ -206,93 +324,136 @@ function toggleSub2(tid, sid) {
   save(); renderView();
 }
 
-function delSub(tid, sid) {
+function askDelSub(tid, sid) {
   const p = getProj(), t = p && p.tasks.find(t => t.id === tid);
   if (!t) return;
-  t.subs = t.subs.filter(s => s.id !== sid);
-  save(); renderView();
+  const s = t.subs.find(s => s.id === sid); if (!s) return;
+  openConfirm('🗑️',
+    `¿Eliminar la subtarea <span class="modal-name">"${esc(s.text)}"</span>?`,
+    'Eliminar',
+    () => {
+      t.subs = t.subs.filter(s => s.id !== sid);
+      save(); renderView();
+    }
+  );
 }
 
 // ─── POMODORO ────────────────────────────────────────────────────────────────
 
 function initTimer() {
   phase = 'work';
-  secs = S.cfg.work * 60;
-  total = secs;
+  secsLeft = S.cfg.work * 60;
+  totalSecs = secsLeft;
+  pausedSecsLeft = secsLeft;
   renderClock();
-  document.getElementById('phase-label').textContent = 'SESIÓN DE TRABAJO';
-  document.getElementById('phase-pill').textContent = 'Trabajo';
-  document.getElementById('phase-pill').className = 'phase-pill';
+  setPhaseUI('work');
   renderDots();
+}
+
+function setPhaseUI(p) {
+  const lbl = document.getElementById('phase-label');
+  const pill = document.getElementById('phase-pill');
+  if (p === 'work') {
+    lbl.textContent = 'SESIÓN DE TRABAJO';
+    pill.textContent = 'Trabajo';
+    pill.className = 'phase-pill';
+  } else if (p === 'short') {
+    lbl.textContent = 'DESCANSO CORTO';
+    pill.textContent = 'Descanso';
+    pill.className = 'phase-pill brk';
+  } else {
+    lbl.textContent = 'DESCANSO LARGO';
+    pill.textContent = 'Descanso largo';
+    pill.className = 'phase-pill brk';
+  }
 }
 
 function toggleTimer() { running ? pauseTimer() : startTimer(); }
 
 function startTimer() {
   running = true;
+  startTime = performance.now();
   document.getElementById('btn-play').innerHTML = '⏸ Pausar';
   document.getElementById('t-sub').textContent = 'En progreso';
-  timerInt = setInterval(() => { secs--; secs <= 0 ? timerDone() : renderClock(); }, 1000);
+  tick();
+}
+
+function tick() {
+  if (!running) return;
+  const elapsed = (performance.now() - startTime) / 1000;
+  secsLeft = Math.max(0, Math.round(pausedSecsLeft - elapsed));
+  renderClock();
+  if (secsLeft <= 0) { timerDone(); }
+  else { timerRAF = requestAnimationFrame(tick); }
 }
 
 function pauseTimer() {
   running = false;
-  clearInterval(timerInt);
+  cancelAnimationFrame(timerRAF);
+  pausedSecsLeft = secsLeft;
   document.getElementById('btn-play').innerHTML = '▶ Continuar';
   document.getElementById('t-sub').textContent = 'Pausado';
 }
 
 function resetTimer() {
   running = false;
-  clearInterval(timerInt);
+  cancelAnimationFrame(timerRAF);
   initTimer();
   document.getElementById('btn-play').innerHTML = '▶ Iniciar';
   document.getElementById('t-sub').textContent = 'Listo';
 }
 
 function timerDone() {
-  clearInterval(timerInt);
+  cancelAnimationFrame(timerRAF);
   running = false;
+  playDone();
 
   if (phase === 'work') {
     S.stats.sessions++;
     S.stats.minutes += S.cfg.work;
+
+    // Sumar sesión a la tarea vinculada
+    if (linkedTaskId) {
+      S.projects.forEach(p => {
+        const t = p.tasks.find(t => t.id === linkedTaskId);
+        if (t) t.pomodoroSessions = (t.pomodoroSessions || 0) + 1;
+      });
+    }
     save();
-    if (S.stats.sessions % S.cfg.sessBeforeLong === 0) {
-      phase = 'long'; secs = S.cfg.long * 60;
-      document.getElementById('phase-label').textContent = 'DESCANSO LARGO';
-      document.getElementById('phase-pill').textContent = 'Descanso largo';
-      document.getElementById('phase-pill').className = 'phase-pill brk';
+
+    const isLong = S.stats.sessions % S.cfg.sessBeforeLong === 0;
+    if (isLong) {
+      phase = 'long'; secsLeft = S.cfg.long * 60;
+      setPhaseUI('long');
       toast('🎉 ¡Descanso largo! Te lo ganaste.');
     } else {
-      phase = 'short'; secs = S.cfg.short * 60;
-      document.getElementById('phase-label').textContent = 'DESCANSO CORTO';
-      document.getElementById('phase-pill').textContent = 'Descanso';
-      document.getElementById('phase-pill').className = 'phase-pill brk';
-      toast('✅ Sesión lista. ¡Breve descanso!');
+      phase = 'short'; secsLeft = S.cfg.short * 60;
+      setPhaseUI('short');
+      toast('✅ ¡Sesión completada! Tómate un descanso.');
     }
   } else {
-    phase = 'work'; secs = S.cfg.work * 60;
-    document.getElementById('phase-label').textContent = 'SESIÓN DE TRABAJO';
-    document.getElementById('phase-pill').textContent = 'Trabajo';
-    document.getElementById('phase-pill').className = 'phase-pill';
-    toast('⏱ ¡A trabajar!');
+    playBreakEnd();
+    phase = 'work'; secsLeft = S.cfg.work * 60;
+    setPhaseUI('work');
+    toast('⏱ ¡Descanso terminado! A trabajar.');
   }
 
-  total = secs;
+  totalSecs = secsLeft;
+  pausedSecsLeft = secsLeft;
   renderClock();
   renderDots();
   document.getElementById('btn-play').innerHTML = '▶ Iniciar';
   document.getElementById('t-sub').textContent = 'Listo';
   document.getElementById('ses-num').textContent = S.stats.sessions;
   updateStats();
+  renderView();
 }
 
 function renderClock() {
-  const m = Math.floor(secs / 60), s = secs % 60;
+  const m = Math.floor(secsLeft / 60), s = secsLeft % 60;
   document.getElementById('t-time').textContent =
     String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
-  const C = 2 * Math.PI * 66, off = C * (1 - secs / total);
+  const off = CIRC * (1 - secsLeft / totalSecs);
   document.getElementById('t-arc').style.strokeDashoffset = off;
 }
 
