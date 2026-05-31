@@ -7,15 +7,25 @@ let S = {
   stats: { sessions: 0, minutes: 0 }
 };
 
-// NUEVO: timer preciso con performance.now()
-let timerRAF = null, running = false;
+// NUEVO: Web Worker "inline" para evadir la suspensión de pestañas del navegador
+const workerCode = `
+  let timer = null;
+  self.onmessage = function(e) {
+    if (e.data === 'start') {
+      timer = setInterval(() => self.postMessage('tick'), 1000);
+    } else if (e.data === 'stop') {
+      clearInterval(timer);
+    }
+  };
+`;
+const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
+const timerWorker = new Worker(URL.createObjectURL(workerBlob));
+
+let running = false;
 let phase = 'work', secsLeft = 0, totalSecs = 0;
 let startTime = null, pausedSecsLeft = 0;
 
-// NUEVO: tarea vinculada al pomodoro
 let linkedTaskId = null;
-
-// NUEVO: confirmación pendiente
 let pendingConfirm = null;
 
 const CIRC = 2 * Math.PI * 66; // radio 66 igual que el original
@@ -53,15 +63,17 @@ function toast(msg) {
 function playDone() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    [523, 659, 784, 1047].forEach((freq, i) => {
+    // Acorde profesional
+    [587.33, 739.99, 880.00].forEach((freq, i) => {
       const o = ctx.createOscillator(), g = ctx.createGain();
       o.connect(g); g.connect(ctx.destination);
-      o.type = 'sine'; o.frequency.value = freq;
-      const t = ctx.currentTime + i * 0.18;
+      o.type = 'sine';
+      o.frequency.value = freq;
+      const t = ctx.currentTime + i * 0.12;
       g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.25, t + 0.03);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
-      o.start(t); o.stop(t + 0.38);
+      g.gain.linearRampToValueAtTime(0.8, t + 0.03); 
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+      o.start(t); o.stop(t + 0.5);
     });
   } catch (e) {}
 }
@@ -69,12 +81,17 @@ function playDone() {
 function playBreakEnd() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.connect(g); g.connect(ctx.destination);
-    o.type = 'sine'; o.frequency.value = 660;
-    g.gain.setValueAtTime(0.3, ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
-    o.start(ctx.currentTime); o.stop(ctx.currentTime + 0.85);
+    // Dos toques rápidos de alerta
+    [783.99, 783.99].forEach((freq, i) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'sine';
+      o.frequency.value = freq;
+      const t = ctx.currentTime + i * 0.2;
+      g.gain.setValueAtTime(0.8, t); 
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+      o.start(t); o.stop(t + 0.2);
+    });
   } catch (e) {}
 }
 
@@ -410,6 +427,19 @@ function askDelSub(tid, sid) {
 
 // ─── POMODORO ────────────────────────────────────────────────────────────────
 
+// Escucha los mensajes del Worker (el nuevo "Tick")
+timerWorker.onmessage = function() {
+  if (!running) return;
+  // Usamos Date.now() para calcular el tiempo real transcurrido
+  const elapsed = (Date.now() - startTime) / 1000;
+  secsLeft = Math.max(0, Math.round(pausedSecsLeft - elapsed));
+  renderClock();
+  
+  if (secsLeft <= 0) { 
+    timerDone(); 
+  }
+};
+
 function initTimer() {
   phase = 'work';
   secsLeft = S.cfg.work * 60;
@@ -439,24 +469,16 @@ function iniciarPomodoroDesdeTarea(tid) {
 
 function startTimer() {
   running = true;
-  startTime = performance.now();
+  startTime = Date.now();
   document.getElementById('btn-play').innerHTML = '⏸ Pausar';
   document.getElementById('t-sub').textContent = 'En progreso';
-  tick();
-}
-
-function tick() {
-  if (!running) return;
-  const elapsed = (performance.now() - startTime) / 1000;
-  secsLeft = Math.max(0, Math.round(pausedSecsLeft - elapsed));
-  renderClock();
-  if (secsLeft <= 0) { timerDone(); }
-  else { timerRAF = requestAnimationFrame(tick); }
+  // Le avisamos al Worker que empiece a enviar ticks
+  timerWorker.postMessage('start');
 }
 
 function pauseTimer() {
   running = false;
-  cancelAnimationFrame(timerRAF);
+  timerWorker.postMessage('stop');
   pausedSecsLeft = secsLeft;
   document.getElementById('btn-play').innerHTML = '▶ Continuar';
   document.getElementById('t-sub').textContent = 'Pausado';
@@ -464,25 +486,23 @@ function pauseTimer() {
 
 function resetTimer() {
   running = false;
-  cancelAnimationFrame(timerRAF);
+  timerWorker.postMessage('stop');
   initTimer();
   document.getElementById('btn-play').innerHTML = '▶ Iniciar';
   document.getElementById('t-sub').textContent = 'Listo';
 }
 
 function timerDone() {
-  cancelAnimationFrame(timerRAF);
   running = false;
+  timerWorker.postMessage('stop');
   
   let shouldAutoStart = false;
 
-  // Lógica principal dependiendo de qué fase acaba de terminar
   if (phase === 'work') {
-    playDone(); // Sonido especial para cuando terminas de trabajar
+    playDone(); 
     S.stats.sessions++;
     S.stats.minutes += S.cfg.work;
 
-    // Vincular la sesión a la tarea activa
     if (linkedTaskId) {
       S.projects.forEach(proj => {
         const t = proj.tasks.find(t => t.id === linkedTaskId);
@@ -491,31 +511,30 @@ function timerDone() {
     }
     save();
 
-    // ¿Toca descanso largo o corto?
     if (S.stats.sessions % S.cfg.sessBeforeLong === 0) {
       phase = 'long'; secsLeft = S.cfg.long * 60;
       document.getElementById('phase-label').textContent = 'DESCANSO LARGO';
       document.getElementById('phase-pill').textContent = 'Descanso largo';
       document.getElementById('phase-pill').className = 'phase-pill brk';
       toast('🎉 ¡Descanso largo! Inícialo cuando estés listo.');
-      shouldAutoStart = false; // El descanso largo se inicia manual
+      shouldAutoStart = false; 
     } else {
       phase = 'short'; secsLeft = S.cfg.short * 60;
       document.getElementById('phase-label').textContent = 'DESCANSO CORTO';
       document.getElementById('phase-pill').textContent = 'Descanso';
       document.getElementById('phase-pill').className = 'phase-pill brk';
       toast('✅ Sesión lista. ¡Breve descanso!');
-      shouldAutoStart = true; // Auto-iniciar descanso corto
+      shouldAutoStart = true; 
     }
 
   } else if (phase === 'short') {
-    playBreakEnd(); // Sonido para volver al trabajo
+    playBreakEnd(); 
     phase = 'work'; secsLeft = S.cfg.work * 60;
     document.getElementById('phase-label').textContent = 'SESIÓN DE TRABAJO';
     document.getElementById('phase-pill').textContent = 'Trabajo';
     document.getElementById('phase-pill').className = 'phase-pill';
     toast('⏱ ¡A trabajar!');
-    shouldAutoStart = true; // Auto-iniciar la sesión de trabajo
+    shouldAutoStart = true; 
 
   } else if (phase === 'long') {
     playBreakEnd(); 
@@ -524,10 +543,9 @@ function timerDone() {
     document.getElementById('phase-pill').textContent = 'Trabajo';
     document.getElementById('phase-pill').className = 'phase-pill';
     toast('⏱ Ciclo completado. Inicia el nuevo ciclo.');
-    shouldAutoStart = false; // El nuevo ciclo se inicia manual
+    shouldAutoStart = false; 
   }
 
-  // Actualizar UI
   totalSecs = secsLeft;
   pausedSecsLeft = secsLeft;
   renderClock();
@@ -536,7 +554,6 @@ function timerDone() {
   updateStats();
   renderView();
 
-  // Control de Flujo Continuo
   if (shouldAutoStart) {
     startTimer();
   } else {
