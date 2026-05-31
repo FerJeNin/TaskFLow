@@ -48,7 +48,7 @@ function toast(msg) {
   nT = setTimeout(() => el.classList.remove('show'), 3000);
 }
 
-// ─── NUEVO: SONIDO ───────────────────────────────────────────────────────────
+// ─── SONIDO ───────────────────────────────────────────────────────────
 
 function playDone() {
   try {
@@ -78,7 +78,7 @@ function playBreakEnd() {
   } catch (e) {}
 }
 
-// ─── NUEVO: MODAL DE CONFIRMACIÓN ────────────────────────────────────────────
+// ─── MODAL DE CONFIRMACIÓN ────────────────────────────────────────────
 
 function openConfirm(icon, body, okLabel, fn) {
   document.getElementById('confirm-icon').textContent = icon;
@@ -172,6 +172,11 @@ function renderView() {
   if (!p) { updateStats(); return; }
 
   document.getElementById('proj-title').textContent = p.name;
+  
+  // Sincronizar el toggle visual de Modo Estricto con el estado del proyecto
+  const seqCheck = document.getElementById('seq-check');
+  if (seqCheck) seqCheck.checked = !!p.sequential;
+
   const tot = p.tasks.length, done = p.tasks.filter(t => t.done).length;
   document.getElementById('cl-sub').textContent = `${done} de ${tot} tareas completadas`;
   document.getElementById('prog-fill').style.width = (tot > 0 ? Math.round(done / tot * 100) : 0) + '%';
@@ -180,13 +185,42 @@ function renderView() {
   renderLinkedBanner();
 }
 
-// BANNER DE TAREA VINCULADA (ACTUALIZADO CON EL NUEVO HTML)
+// ─── ORDENAMIENTO Y MODO ESTRICTO ──────────────────────────────────────────
+
+function toggleSequential() {
+  const p = getProj();
+  if (p) {
+    p.sequential = !p.sequential;
+    save();
+    renderView();
+    toast(p.sequential ? '🔒 Modo estricto activado' : '🔓 Modo libre activado');
+  }
+}
+
+function moveTask(tid, dir) {
+  const p = getProj();
+  if (!p) return;
+  const idx = p.tasks.findIndex(t => t.id === tid);
+  if (idx < 0) return;
+  const newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= p.tasks.length) return;
+
+  const temp = p.tasks[idx];
+  p.tasks[idx] = p.tasks[newIdx];
+  p.tasks[newIdx] = temp;
+
+  save();
+  renderView();
+}
+
+// ─── BANNER VINCULADO ────────────────────────────────────────────────────────
+
 function renderLinkedBanner() {
   const area = document.getElementById('linked-task-area');
   
   if (!linkedTaskId) { 
     area.style.display = 'none'; 
-    area.innerHTML = ''; // Limpiamos el contenido por si acaso
+    area.innerHTML = '';
     return; 
   }
   
@@ -209,6 +243,7 @@ function renderLinkedBanner() {
     <button class="btn-unlink" onclick="unlinkTask()" title="Desvincular">×</button>
   `;
 }
+
 function unlinkTask() {
   linkedTaskId = null;
   renderLinkedBanner();
@@ -216,34 +251,45 @@ function unlinkTask() {
   toast('Tarea desvinculada');
 }
 
-// RENDER DE TAREAS (ACTUALIZADO CON EL BOTÓN PLAY)
+// ─── RENDER TAREAS (CON MODO ESTRICTO) ────────────────────────────────────────
+
 function renderTasks(p) {
   const el = document.getElementById('tasks-list');
   if (!p.tasks.length) {
     el.innerHTML = `<div class="empty"><span>✅</span><p>Sin tareas. ¡Agrega la primera!</p></div>`;
     return;
   }
-  el.innerHTML = p.tasks.map(t => {
+
+  let canStartNext = true;
+
+  el.innerHTML = p.tasks.map((t, idx) => {
+    
+    // Lógica de Bloqueo
+    let isLocked = false;
+    if (p.sequential && !canStartNext && !t.done) {
+      isLocked = true;
+    }
+    if (p.sequential && !t.done) {
+      canStartNext = false;
+    }
+
     const sub = t.subs || [], sd = sub.filter(s => s.done).length;
     const sb = sub.length ? `<span class="badge b-sub">${sd}/${sub.length} sub</span>` : '';
     const pc = { high: 'b-high', mid: 'b-mid', low: 'b-low' }[t.prio] || 'b-mid';
     const pl = { high: 'Alta', mid: 'Media', low: 'Baja' }[t.prio] || 'Media';
     const pb = (t.pomodoroSessions > 0) ? `<span class="badge b-pomo">🍅 ${t.pomodoroSessions}</span>` : '';
-    
     const isLinked = linkedTaskId === t.id;
     
-    // SE AGREGÓ: draggable y eventos ondrag...
-    return `<div class="task-card${t.done ? ' done' : ''}${isLinked ? ' linked' : ''}"
-      draggable="true"
-      ondragstart="tDragStart(event, '${t.id}')"
-      ondragover="event.preventDefault()"
-      ondrop="tDrop(event, '${t.id}')"
-      ondragend="tDragEnd(event)">
+    // Botones Arriba/Abajo
+    const upBtn = `<button class="btn-order" onclick="moveTask('${t.id}', -1)" ${idx === 0 ? 'disabled' : ''} title="Subir">▲</button>`;
+    const downBtn = `<button class="btn-order" onclick="moveTask('${t.id}', 1)" ${idx === p.tasks.length - 1 ? 'disabled' : ''} title="Bajar">▼</button>`;
+
+    return `<div class="task-card${t.done ? ' done' : ''}${isLinked ? ' linked' : ''}${isLocked ? ' locked' : ''}">
       <div class="task-main">
-        <div class="drag-handle" title="Arrastrar para ordenar">⋮⋮</div>
+        <div class="order-col">${upBtn}${downBtn}</div>
         <div class="t-check${t.done ? ' checked' : ''}" onclick="toggleTask('${t.id}')"></div>
         <div class="task-info">
-          <div class="task-title">${esc(t.title)}</div>
+          <div class="task-title">${isLocked ? '🔒 ' : ''}${esc(t.title)}</div>
           <div class="task-badges"><span class="badge ${pc}">${pl}</span>${sb}${pb}</div>
         </div>
         <div class="task-actions">
@@ -267,15 +313,8 @@ function renderTasks(p) {
 }
 
 function renderSubs(t) {
-  // SE AGREGÓ: draggable y eventos ondrag... a las subtareas
   return (t.subs || []).map(s => `
-    <div class="subitem${s.done ? ' done' : ''}"
-      draggable="true"
-      ondragstart="sDragStart(event, '${t.id}', '${s.id}')"
-      ondragover="event.preventDefault()"
-      ondrop="sDrop(event, '${t.id}', '${s.id}')"
-      ondragend="sDragEnd(event)">
-      <div class="drag-handle sub-drag" title="Arrastrar">⋮⋮</div>
+    <div class="subitem${s.done ? ' done' : ''}">
       <div class="s-check${s.done ? ' checked' : ''}" onclick="toggleSub2('${t.id}','${s.id}')"></div>
       <span class="s-text">${esc(s.text)}</span>
       <button class="s-del always-visible" onclick="askDelSub('${t.id}','${s.id}')">✕</button>
@@ -291,7 +330,7 @@ function linkTask(tid) {
   if (task) toast(`Tarea vinculada: "${task.title}"`);
 }
 
-// ─── TASKS ───────────────────────────────────────────────────────────────────
+// ─── LOGICA DE TAREAS ────────────────────────────────────────────────────────
 
 function addTask() {
   const inp = document.getElementById('new-task-inp'), v = inp.value.trim();
@@ -385,16 +424,12 @@ function initTimer() {
 
 function toggleTimer() { running ? pauseTimer() : startTimer(); }
 
-// NUEVO: Función para el botón Play dentro de la tarjeta de tarea
 function iniciarPomodoroDesdeTarea(tid) {
-  // Aseguramos que la tarea esté vinculada
   if (linkedTaskId !== tid) {
     linkTask(tid);
   }
   
-  // Si no está corriendo el timer, lo iniciamos
   if (!running) {
-    // Si estaba en descanso, forzamos a que vuelva a sesión de trabajo
     if (phase !== 'work') {
       initTimer();
     }
@@ -536,78 +571,6 @@ function saveCfg() {
   closeCfgModal();
   if (!running) initTimer();
   toast('Configuración guardada ✓');
-}
-
-let draggedTaskId = null;
-let draggedSubId = null;
-
-// Lógica para Tareas Principales
-function tDragStart(e, id) {
-  draggedTaskId = id;
-  e.dataTransfer.effectAllowed = 'move';
-  // setTimeout asegura que el navegador capture la imagen del elemento antes de ponerlo transparente
-  setTimeout(() => e.target.classList.add('dragging'), 0);
-}
-
-function tDrop(e, targetId) {
-  e.preventDefault();
-  e.stopPropagation();
-  if (!draggedTaskId || draggedTaskId === targetId) return;
-
-  const p = getProj();
-  if (!p) return;
-
-  const oldIdx = p.tasks.findIndex(t => t.id === draggedTaskId);
-  const newIdx = p.tasks.findIndex(t => t.id === targetId);
-
-  if (oldIdx === -1 || newIdx === -1) return;
-
-  // Extraemos la tarea y la insertamos en la nueva posición
-  const [movedTask] = p.tasks.splice(oldIdx, 1);
-  p.tasks.splice(newIdx, 0, movedTask);
-
-  save();
-  renderView();
-}
-
-function tDragEnd(e) {
-  e.target.classList.remove('dragging');
-  draggedTaskId = null;
-}
-
-// Lógica para Subtareas
-function sDragStart(e, tid, sid) {
-  draggedSubId = sid;
-  e.dataTransfer.effectAllowed = 'move';
-  e.stopPropagation(); // Evita que se arrastre la tarea padre
-  setTimeout(() => e.target.classList.add('dragging'), 0);
-}
-
-function sDrop(e, tid, targetSid) {
-  e.preventDefault();
-  e.stopPropagation(); // Evita que se dispare el drop de la tarea padre
-  if (!draggedSubId || draggedSubId === targetSid) return;
-
-  const p = getProj();
-  const task = p.tasks.find(x => x.id === tid);
-  if (!task) return;
-
-  const oldIdx = task.subs.findIndex(s => s.id === draggedSubId);
-  const newIdx = task.subs.findIndex(s => s.id === targetSid);
-
-  if (oldIdx === -1 || newIdx === -1) return;
-
-  const [movedSub] = task.subs.splice(oldIdx, 1);
-  task.subs.splice(newIdx, 0, movedSub);
-
-  save();
-  renderView();
-}
-
-function sDragEnd(e) {
-  e.target.classList.remove('dragging');
-  draggedSubId = null;
-  e.stopPropagation();
 }
 
 // ─── MODAL CLOSE ON BACKDROP ─────────────────────────────────────────────────
